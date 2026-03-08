@@ -21,7 +21,7 @@ export function compressTool(tool: MCPToolDefinition): MCPToolDefinition {
 
   // 2. Compress input schema
   if (compressed.inputSchema) {
-    compressed.inputSchema = compressSchema(compressed.inputSchema);
+    compressed.inputSchema = compressSchema(compressed.inputSchema) as typeof compressed.inputSchema;
   }
 
   return compressed;
