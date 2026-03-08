@@ -13,7 +13,7 @@
  *   GET  /health                  → Health check
  *   POST /api/test-compress       → Test compression on sample tools
  */
-import type { Env } from "./types";
+import type { Env, ProxyContext } from "./types";
 import { handleProxy, handleSSEProxy } from "./proxy";
 import { registerUser, loginUser, getUsage, generateApiKey, validateApiKey } from "./auth";
 
@@ -23,8 +23,13 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
+/** Basic email format validation */
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, executionCtx: ExecutionContext): Promise<Response> {
     // Handle CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -32,6 +37,12 @@ export default {
 
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // Build proxy context with waitUntil from ExecutionContext
+    const ctx: ProxyContext = {
+      env,
+      waitUntil: (p) => executionCtx.waitUntil(p),
+    };
 
     try {
       // --- Health check ---
@@ -45,7 +56,7 @@ export default {
       if (proxyMatch && request.method === "POST") {
         const [, apiKey, encodedTarget] = proxyMatch;
         const targetUrl = decodeURIComponent(encodedTarget);
-        return addCors(await handleProxy(request, env, apiKey, targetUrl));
+        return addCors(await handleProxy(request, ctx, apiKey, targetUrl));
       }
 
       // SSE routes: GET/POST /sse/{apiKey}/{encoded-target-url}
@@ -53,14 +64,21 @@ export default {
       if (sseMatch) {
         const [, apiKey, encodedTarget] = sseMatch;
         const targetUrl = decodeURIComponent(encodedTarget);
-        return addCors(await handleSSEProxy(request, env, apiKey, targetUrl));
+        return addCors(await handleSSEProxy(request, ctx, apiKey, targetUrl));
       }
 
       // --- API routes ---
       if (path === "/api/register" && request.method === "POST") {
-        const { email, password } = await request.json() as any;
+        let body: any;
+        try {
+          body = await request.json();
+        } catch {
+          return json({ error: "Invalid JSON body" }, 400);
+        }
+        const { email, password } = body;
         if (!email || !password) return json({ error: "Email and password required" }, 400);
-        if (password.length < 6) return json({ error: "Password must be 6+ characters" }, 400);
+        if (typeof email !== "string" || !isValidEmail(email)) return json({ error: "Invalid email format" }, 400);
+        if (typeof password !== "string" || password.length < 6) return json({ error: "Password must be 6+ characters" }, 400);
 
         const { user, apiKey } = await registerUser(env, email, password);
         return json({
@@ -74,7 +92,13 @@ export default {
       }
 
       if (path === "/api/login" && request.method === "POST") {
-        const { email, password } = await request.json() as any;
+        let body: any;
+        try {
+          body = await request.json();
+        } catch {
+          return json({ error: "Invalid JSON body" }, 400);
+        }
+        const { email, password } = body;
         if (!email || !password) return json({ error: "Email and password required" }, 400);
 
         const { user, apiKeys } = await loginUser(env, email, password);
@@ -119,11 +143,16 @@ export default {
 
       // POST /api/test-compress — test compression on sample tool definitions
       if (path === "/api/test-compress" && request.method === "POST") {
-        const { tools } = await request.json() as any;
+        let body: any;
+        try {
+          body = await request.json();
+        } catch {
+          return json({ error: "Request body must be valid JSON" }, 400);
+        }
+        const { tools } = body;
         if (!tools || !Array.isArray(tools)) return json({ error: "Provide { tools: [...] }" }, 400);
 
-        const { compressTools, estimateTokens } = await import("./compress");
-        const before = JSON.stringify(tools);
+        const { compressTools } = await import("./compress");
         const { tools: compressed, tokensBefore, tokensAfter } = compressTools(tools);
 
         return json({
@@ -152,7 +181,11 @@ export default {
       }, 404);
 
     } catch (e: any) {
-      return json({ error: e.message || "Internal error" }, e.message?.includes("already registered") ? 409 : 500);
+      const message = e.message || "";
+      // Only expose known safe error messages
+      if (message.includes("already registered")) return json({ error: "Email already registered" }, 409);
+      if (message.includes("Invalid credentials")) return json({ error: "Invalid credentials" }, 401);
+      return json({ error: "Internal server error" }, 500);
     }
   },
 };

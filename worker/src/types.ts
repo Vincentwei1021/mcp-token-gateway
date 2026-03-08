@@ -3,6 +3,12 @@ export interface Env {
   ENVIRONMENT: string;
 }
 
+/** Wrapper to collect waitUntil promises for usage tracking */
+export interface ProxyContext {
+  env: Env;
+  waitUntil: (promise: Promise<any>) => void;
+}
+
 export interface User {
   id: string;
   email: string;

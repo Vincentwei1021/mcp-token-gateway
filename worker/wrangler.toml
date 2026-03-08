@@ -2,13 +2,17 @@ name = "mcp-token-gateway"
 main = "src/index.ts"
 compatibility_date = "2025-03-01"
 
+routes = [
+  { pattern = "gateway.toolboxlite.com/*", zone_name = "toolboxlite.com" }
+]
+
 [vars]
 ENVIRONMENT = "production"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "placeholder_kv_id"
-preview_id = "placeholder_preview_id"
+id = "9b8fa45e3dc740068207360560f174fd"
+preview_id = "d72bd3b63ca34ca8bec3c5a0ec5526cf"
 
 [observability]
 enabled = true

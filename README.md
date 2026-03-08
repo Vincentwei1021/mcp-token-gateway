@@ -130,6 +130,19 @@ Visit [gateway.toolboxlite.com/dashboard](https://gateway.toolboxlite.com/dashbo
 | **Developer** | $19/mo | 50,000 | 90%+ (full optimization) |
 | **Team** | $49/mo | 200,000 | 90%+ + team features |
 
+## Known Limitations
+
+### Cloudflare-Proxied Downstream Servers (Error 1016)
+
+If the downstream MCP server you're proxying is also behind Cloudflare's CDN proxy (orange-clouded), Cloudflare Workers will return a **1016 error** due to CDN loop detection. This is a Cloudflare platform restriction.
+
+**Workarounds:**
+- Use the **origin IP** of the downstream server (bypass its Cloudflare proxy)
+- Use a downstream URL that is **not proxied** through Cloudflare (DNS-only / gray-clouded)
+- Self-host the gateway worker on a non-Cloudflare platform
+
+This does **not** affect downstream servers hosted on other platforms (AWS, GCP, Vercel, Railway, etc.).
+
 ## Architecture
 
 - **Proxy Layer**: Cloudflare Workers (0ms cold start, global edge)

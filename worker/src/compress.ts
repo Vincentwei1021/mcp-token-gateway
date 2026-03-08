@@ -44,6 +44,46 @@ export function compressTools(tools: MCPToolDefinition[]): {
   return { tools: compressed, tokensBefore, tokensAfter };
 }
 
+/** Common abbreviations that end with a period but aren't sentence boundaries */
+const ABBREVIATIONS = new Set([
+  "e.g", "i.e", "etc", "vs", "dr", "mr", "mrs", "jr", "sr",
+  "inc", "ltd", "co", "corp", "dept", "est", "approx", "ref",
+  "fig", "vol", "no", "op", "rev", "ed", "pt", "ch",
+]);
+
+/**
+ * Find the index of a true sentence boundary (period/!/? followed by space or end).
+ * Skips abbreviations like "e.g.", "i.e.", "etc.", single-letter abbreviations,
+ * and decimal numbers (e.g., "1.5").
+ */
+function findSentenceBoundary(text: string, startFrom: number = 0): number {
+  for (let i = startFrom; i < text.length; i++) {
+    const ch = text[i];
+    if (ch !== "." && ch !== "!" && ch !== "?") continue;
+
+    // Must be followed by space, end-of-string, or closing quote/paren
+    const next = text[i + 1];
+    if (next && next !== " " && next !== '"' && next !== "'" && next !== ")" && next !== "]") continue;
+
+    if (ch === "." && i > 0) {
+      // Skip decimal numbers: digit.digit
+      if (/\d/.test(text[i - 1]) && next && /\d/.test(next)) continue;
+
+      // Skip single lowercase letter abbreviations (e.g., "e." in "e.g.")
+      if (i >= 1 && /^[a-z]$/.test(text[i - 1]) && (i < 2 || /[\s(,]/.test(text[i - 2]))) continue;
+
+      // Skip known abbreviations: find the word before the period
+      const before = text.slice(Math.max(0, i - 10), i).toLowerCase();
+      const wordMatch = before.match(/(\w+)$/);
+      if (wordMatch && ABBREVIATIONS.has(wordMatch[1])) continue;
+    }
+
+    // Valid sentence boundary
+    return i;
+  }
+  return -1;
+}
+
 function compressDescription(desc: string): string {
   // Strip leading/trailing whitespace
   let d = desc.trim();
@@ -68,15 +108,24 @@ function compressDescription(desc: string): string {
     d = d.replace(filler, "");
   }
 
-  // Keep first 2 sentences max
-  const sentences = d.match(/[^.!?]+[.!?]+/g);
-  if (sentences && sentences.length > 2) {
-    d = sentences.slice(0, 2).join("").trim();
+  // Keep first 2 sentences max (using smart boundary detection)
+  let sentenceCount = 0;
+  let cutPos = -1;
+  let searchFrom = 0;
+  while (sentenceCount < 2) {
+    const boundary = findSentenceBoundary(d, searchFrom);
+    if (boundary === -1) break;
+    sentenceCount++;
+    cutPos = boundary + 1;
+    searchFrom = boundary + 1;
+  }
+  if (sentenceCount >= 2 && cutPos > 0 && cutPos < d.length) {
+    d = d.slice(0, cutPos).trim();
   }
 
   // Final trim
   d = d.trim();
-  if (!d.endsWith(".")) d += ".";
+  if (!d.endsWith(".") && !d.endsWith("!") && !d.endsWith("?")) d += ".";
 
   return d;
 }
@@ -128,11 +177,11 @@ function compressProperty(name: string, prop: Record<string, any>): Record<strin
         .replace(/\s+/g, " ")
         .trim();
 
-      // Truncate long property descriptions
-      if (compressed.description.length > 100) {
-        const firstSentence = compressed.description.match(/^[^.!?]+[.!?]/);
-        if (firstSentence) {
-          compressed.description = firstSentence[0].trim();
+      // Truncate long property descriptions using smart sentence detection
+      if (compressed.description.length > 200) {
+        const boundary = findSentenceBoundary(compressed.description);
+        if (boundary > 0 && boundary < compressed.description.length - 1) {
+          compressed.description = compressed.description.slice(0, boundary + 1).trim();
         }
       }
     }

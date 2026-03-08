@@ -1,14 +1,14 @@
 /**
  * MCP Proxy — intercepts MCP HTTP/SSE traffic, compresses tool definitions
  */
-import type { Env, MCPResponse } from "./types";
+import type { Env, MCPResponse, ProxyContext } from "./types";
 import { compressTools, estimateTokens } from "./compress";
 import { validateApiKey, trackUsage } from "./auth";
 
 /** Handle MCP HTTP POST proxy (JSON-RPC over HTTP) */
-export async function handleProxy(request: Request, env: Env, apiKey: string, targetUrl: string): Promise<Response> {
+export async function handleProxy(request: Request, ctx: ProxyContext, apiKey: string, targetUrl: string): Promise<Response> {
   // Validate API key
-  const key = await validateApiKey(env, apiKey);
+  const key = await validateApiKey(ctx.env, apiKey);
   if (!key) {
     return jsonResponse({ error: "Invalid API key" }, 401);
   }
@@ -30,20 +30,30 @@ export async function handleProxy(request: Request, env: Env, apiKey: string, ta
   // Only compress JSON-RPC responses that contain tools
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("json")) {
-    // Pass through non-JSON responses (SSE events, etc.)
+    // Non-JSON: still track the request (with estimated token count)
+    const bodyBytes = response.headers.get("content-length");
+    const estimated = bodyBytes ? Math.ceil(parseInt(bodyBytes) / 4) : 0;
+    ctx.waitUntil(trackUsage(ctx.env, apiKey, estimated, estimated));
+    return response;
+  }
+
+  let bodyText: string;
+  try {
+    bodyText = await response.text();
+  } catch {
     return response;
   }
 
   try {
-    const body: MCPResponse = await response.json();
+    const body: MCPResponse = JSON.parse(bodyText);
 
     // Check if this is a tools/list response
     if (body.result?.tools && Array.isArray(body.result.tools)) {
       const { tools, tokensBefore, tokensAfter } = compressTools(body.result.tools);
       body.result.tools = tools;
 
-      // Track usage (non-blocking)
-      trackUsage(env, apiKey, tokensBefore, tokensAfter).catch(() => {});
+      // Track usage via waitUntil (ensures KV write completes after response)
+      ctx.waitUntil(trackUsage(ctx.env, apiKey, tokensBefore, tokensAfter));
 
       // Add compression headers
       const headers = new Headers(response.headers);
@@ -58,20 +68,28 @@ export async function handleProxy(request: Request, env: Env, apiKey: string, ta
       });
     }
 
-    // Non-tools response: pass through
-    return new Response(JSON.stringify(body), {
+    // Non-tools JSON response: track pass-through request
+    const estimated = estimateTokens(bodyText);
+    ctx.waitUntil(trackUsage(ctx.env, apiKey, estimated, estimated));
+
+    return new Response(bodyText, {
       status: response.status,
       headers: response.headers,
     });
   } catch {
-    // If JSON parse fails, return original response
-    return response;
+    // JSON parse fail: track and return raw text
+    const estimated = estimateTokens(bodyText);
+    ctx.waitUntil(trackUsage(ctx.env, apiKey, estimated, estimated));
+    return new Response(bodyText, {
+      status: response.status,
+      headers: response.headers,
+    });
   }
 }
 
 /** Handle SSE proxy — stream through, intercept tools/list in SSE events */
-export async function handleSSEProxy(request: Request, env: Env, apiKey: string, targetUrl: string): Promise<Response> {
-  const key = await validateApiKey(env, apiKey);
+export async function handleSSEProxy(request: Request, ctx: ProxyContext, apiKey: string, targetUrl: string): Promise<Response> {
+  const key = await validateApiKey(ctx.env, apiKey);
   if (!key) {
     return jsonResponse({ error: "Invalid API key" }, 401);
   }
@@ -99,8 +117,11 @@ export async function handleSSEProxy(request: Request, env: Env, apiKey: string,
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
+  // Track that a proxy request happened (at least 1 request)
+  ctx.waitUntil(trackUsage(ctx.env, apiKey, 0, 0));
+
   // Process SSE stream in background
-  (async () => {
+  const streamProcessing = (async () => {
     let buffer = "";
     try {
       while (true) {
@@ -118,7 +139,8 @@ export async function handleSSEProxy(request: Request, env: Env, apiKey: string,
               if (data.result?.tools && Array.isArray(data.result.tools)) {
                 const { tools, tokensBefore, tokensAfter } = compressTools(data.result.tools);
                 data.result.tools = tools;
-                trackUsage(env, apiKey, tokensBefore, tokensAfter).catch(() => {});
+                // Use waitUntil for the KV write
+                ctx.waitUntil(trackUsage(ctx.env, apiKey, tokensBefore, tokensAfter));
                 await writer.write(encoder.encode(`data: ${JSON.stringify(data)}\n`));
                 continue;
               }
@@ -130,12 +152,13 @@ export async function handleSSEProxy(request: Request, env: Env, apiKey: string,
         }
       }
       if (buffer) await writer.write(encoder.encode(buffer));
-    } catch (e) {
+    } catch {
       // Stream error
     } finally {
       await writer.close();
     }
   })();
+  ctx.waitUntil(streamProcessing);
 
   const headers = new Headers(response.headers);
   headers.set("x-mtg-proxy", "active");
