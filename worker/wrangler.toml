@@ -1,0 +1,14 @@
+name = "mcp-token-gateway"
+main = "src/index.ts"
+compatibility_date = "2025-03-01"
+
+[vars]
+ENVIRONMENT = "production"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "placeholder_kv_id"
+preview_id = "placeholder_preview_id"
+
+[observability]
+enabled = true
