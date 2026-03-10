@@ -225,6 +225,24 @@ async function handleToolsCall(ctx: ProxyContext, userId: string, apiKey: string
 async function fetchToolsFromServer(server: MCPServer): Promise<MCPToolDefinition[]> {
   const headers = buildAuthHeaders(server);
   headers["Content-Type"] = "application/json";
+  headers["Accept"] = "application/json, text/event-stream";
+
+  // Some upstream servers require initialize before tools/list
+  const initBody: MCPRequest = {
+    jsonrpc: "2.0",
+    id: 0,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: GATEWAY_INFO,
+    },
+  };
+
+  // Fire initialize (best-effort, don't block on failure)
+  try {
+    await fetch(server.url, { method: "POST", headers, body: JSON.stringify(initBody) });
+  } catch {}
 
   const body: MCPRequest = {
     jsonrpc: "2.0",
@@ -240,12 +258,31 @@ async function fetchToolsFromServer(server: MCPServer): Promise<MCPToolDefinitio
 
   if (!res.ok) return [];
 
+  // Handle SSE response (some servers return text/event-stream)
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("text/event-stream")) {
+    const text = await res.text();
+    // Parse SSE: find "data: " lines containing JSON-RPC result
+    for (const line of text.split("\n")) {
+      if (line.startsWith("data: ")) {
+        try {
+          const data = JSON.parse(line.slice(6)) as MCPResponse;
+          if (data.result?.tools) return data.result.tools;
+        } catch {}
+      }
+    }
+    return [];
+  }
+
   const data = await res.json() as MCPResponse;
   return data.result?.tools || [];
 }
 
 async function forwardToolCall(target: ToolMapping[string], req: MCPRequest): Promise<MCPResponse> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+  };
 
   if (target.serverAuthType === "bearer" && target.serverAuthValue) {
     headers["Authorization"] = `Bearer ${target.serverAuthValue}`;
@@ -261,6 +298,20 @@ async function forwardToolCall(target: ToolMapping[string], req: MCPRequest): Pr
 
   if (!res.ok) {
     throw new Error(`Upstream returned ${res.status}`);
+  }
+
+  // Handle SSE response
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("text/event-stream")) {
+    const text = await res.text();
+    for (const line of text.split("\n")) {
+      if (line.startsWith("data: ")) {
+        try {
+          return JSON.parse(line.slice(6)) as MCPResponse;
+        } catch {}
+      }
+    }
+    throw new Error("No valid JSON-RPC response in SSE stream");
   }
 
   return await res.json() as MCPResponse;
