@@ -6,12 +6,12 @@ const dmSans = DM_Sans({ subsets: ["latin"], variable: "--font-sans", weight: ["
 const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono", weight: ["400","500","600"] });
 
 export const metadata: Metadata = {
-  title: "MCP Token Gateway — Cut 40-90% of MCP Tool Token Overhead",
-  description: "Lightweight proxy that compresses MCP tool definitions, saving 40-90% token costs. Free tier, zero config, Cloudflare edge.",
-  keywords: ["MCP", "token optimization", "MCP gateway", "tool compression", "Claude", "Cursor", "AI agent"],
+  title: "MCP Control Plane — One Gateway for All Your MCP Servers",
+  description: "Lightweight MCP control plane for indie devs. Register servers, create profiles, and manage all your MCP tools through one gateway endpoint. Free tier available.",
+  keywords: ["MCP", "control plane", "MCP gateway", "tool management", "Claude", "Cursor", "AI agent"],
   openGraph: {
-    title: "MCP Token Gateway — Cut MCP Token Costs by 40-90%",
-    description: "Proxy your MCP connections through our gateway. Tool definitions get compressed automatically. Free tier available.",
+    title: "MCP Control Plane — One Gateway for All Your MCP Servers",
+    description: "Stop juggling MCP server URLs. Register, group, and route tools through one endpoint. Free tier available.",
     type: "website",
   },
 };
