@@ -256,7 +256,11 @@ export default {
           { requests: 0, tokensBefore: 0, tokensAfter: 0, tokensSaved: 0 }
         );
 
-        return json({ success: true, period: `${days} days`, totals, daily: usage });
+        const savingsPercent = totals.tokensBefore > 0
+          ? ((totals.tokensSaved / totals.tokensBefore) * 100).toFixed(1) + "%"
+          : "0%";
+
+        return json({ success: true, period: `${days} days`, totals: { ...totals, savingsPercent }, daily: usage });
       }
 
       // ── Test compress ──

@@ -332,9 +332,13 @@ function buildAuthHeaders(server: MCPServer): Record<string, string> {
 async function getActiveServers(env: Env, userId: string, apiKey: string): Promise<MCPServer[]> {
   const profileId = await getActiveProfile(env, apiKey);
   if (profileId) {
-    return getServersForProfile(env, userId, profileId);
+    const servers = await getServersForProfile(env, userId, profileId);
+    // If profile was deleted or has no servers, fall back to all servers
+    if (servers.length > 0) return servers;
+    // Profile is stale — clean up the reference
+    await env.KV.delete(`active_profile:${apiKey}`);
   }
-  // No active profile — return all servers (default behavior)
+  // No active profile (or stale) — return all servers
   return listServers(env, userId);
 }
 
